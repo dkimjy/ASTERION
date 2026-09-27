@@ -1,7 +1,9 @@
 import from rdkit { Chem }
 import from rdkit.Chem { AllChem, Crippen, Descriptors, Lipinski }
+import from uuid { uuid4 }
 
 node Target {
+    has run_id: str = "";
     has name: str = "";
     has disease_context: str = "";
 }
@@ -20,6 +22,7 @@ obj BondView {
 }
 
 node Candidate {
+    has run_id: str = "";
     has smiles: str = "";
     has atoms: list[AtomView] = [];
     has bonds: list[BondView] = [];
@@ -36,6 +39,77 @@ node Candidate {
 
 edge DerivedFrom: Candidate --> Candidate {
     has mutation_applied: str = "";
+}
+
+obj JacGraphNode {
+    has node_id: str;
+    has node_type: str;
+    has label: str;
+    has detail: str;
+    has generation: int = -1;
+}
+
+obj JacGraphEdge {
+    has source: str;
+    has target: str;
+    has edge_type: str;
+    has label: str;
+}
+
+obj JacWalkerTrace {
+    has name: str;
+    has status: str;
+    has route: list[str];
+    has visited_count: int;
+}
+
+obj JacGraphView {
+    has nodes: list[JacGraphNode];
+    has edges: list[JacGraphEdge];
+    has walker: JacWalkerTrace;
+}
+
+walker DiscoveryGraphWalker {
+    has run_id: str;
+    has nodes: list[JacGraphNode] = [];
+    has edges: list[JacGraphEdge] = [];
+    has route: list[str] = [];
+    has reports: list[JacGraphView] = [];
+
+    can begin_graph with Root entry {
+        self.nodes.append(JacGraphNode(node_id="root", node_type="Root", label="Graph root", detail="Current run entry point"));
+        self.route.append("Root");
+        visit [here -->];
+    }
+
+    can capture_target with Target entry {
+        if here.run_id != self.run_id { skip; }
+        target_id = "target-" + self.run_id;
+        self.nodes.append(JacGraphNode(node_id=target_id, node_type="Target", label=here.name, detail=here.disease_context));
+        self.edges.append(JacGraphEdge(source="root", target=target_id, edge_type="Untyped", label="root attachment"));
+        self.route.append("Target: " + here.name);
+    }
+
+    can capture_candidate with Candidate entry {
+        if here.run_id != self.run_id { skip; }
+        candidate_id = "candidate-" + str(here.generation);
+        detail = "RDKit screen passed" if here.lipinski_pass else "Review descriptor thresholds";
+        self.nodes.append(JacGraphNode(node_id=candidate_id, node_type="Candidate", label="Generation " + str(here.generation), detail=detail, generation=here.generation));
+        if here.generation == 0 {
+            self.edges.append(JacGraphEdge(source="root", target=candidate_id, edge_type="Untyped", label="root attachment"));
+        } else {
+            self.edges.append(JacGraphEdge(source="candidate-" + str(here.generation - 1), target=candidate_id, edge_type="DerivedFrom", label=here.mutation_applied));
+        }
+        self.route.append("Candidate generation " + str(here.generation));
+        visit [here ->:DerivedFrom:->];
+    }
+
+    can finish_graph with Root exit {
+        if len(self.nodes) > 1 {
+            trace = JacWalkerTrace(name="DiscoveryGraphWalker", status="Complete", route=self.route, visited_count=len(self.route));
+            report JacGraphView(nodes=self.nodes, edges=self.edges, walker=trace);
+        }
+    }
 }
 
 obj CandidateView {
@@ -57,6 +131,7 @@ obj DiscoveryResult {
     has target_name: str;
     has disease_context: str;
     has candidates: list[CandidateView];
+    has graph: JacGraphView;
     has docking_status: str;
     has scope_note: str;
 }
@@ -129,7 +204,8 @@ def:pub run_discovery(target_name: str, disease_context: str, seed_smiles: str) 
         raise ValueError("Enter a target and a seed SMILES string.");
     }
 
-    target = Target(name=target_name.strip(), disease_context=disease_context.strip());
+    run_id = str(uuid4());
+    target = Target(run_id=run_id, name=target_name.strip(), disease_context=disease_context.strip());
     root ++> target;
     seed = seed_smiles.strip();
     generation_count = 4;
@@ -152,8 +228,10 @@ def:pub run_discovery(target_name: str, disease_context: str, seed_smiles: str) 
         }
 
         candidate = _describe_candidate(smiles, generation, mutation);
-        root ++> candidate;
-        if previous is not None {
+        candidate.run_id = run_id;
+        if previous is None {
+            root ++> candidate;
+        } else {
             prior = previous as Candidate;
             prior +>:DerivedFrom(mutation_applied=mutation):+> candidate;
         }
@@ -166,5 +244,11 @@ def:pub run_discovery(target_name: str, disease_context: str, seed_smiles: str) 
         views.append(CandidateView(smiles=candidate.smiles, atoms=candidate.atoms, bonds=candidate.bonds, generation=candidate.generation, mol_weight=candidate.mol_weight, logp=candidate.logp, h_donors=candidate.h_donors, h_acceptors=candidate.h_acceptors, lipinski_pass=candidate.lipinski_pass, proxy_score=candidate.proxy_score, failure_reason=candidate.failure_reason, mutation_applied=candidate.mutation_applied));
     }
 
-    return DiscoveryResult(target_name=target.name, disease_context=target.disease_context, candidates=views, docking_status="Not run", scope_note="RDKit validates SMILES, generates a 3D conformer for each candidate, and computes molecular descriptors. The entered target is recorded but does not condition the demo scaffold edits or proxy ranking. Target resolution, protein lookup, PDB retrieval, and AutoDock Vina docking are not run.");
+    graph_walk = root spawn DiscoveryGraphWalker(run_id=run_id);
+    if len(graph_walk.reports) == 0 {
+        raise ValueError("The Jac graph walker did not return a graph snapshot.");
+    }
+    graph = graph_walk.reports[0];
+
+    return DiscoveryResult(target_name=target.name, disease_context=target.disease_context, candidates=views, graph=graph, docking_status="Not run", scope_note="RDKit validates SMILES, generates a 3D conformer for each candidate, and computes molecular descriptors. The entered target is recorded but does not condition the demo scaffold edits or proxy ranking. Target resolution, protein lookup, PDB retrieval, and AutoDock Vina docking are not run.");
 }

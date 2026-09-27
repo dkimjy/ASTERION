@@ -1,6 +1,7 @@
-sv import from ..services.discovery { AtomView, BondView, CandidateView, run_discovery }
+sv import from ..services.discovery { AtomView, BondView, CandidateView, JacGraphView, run_discovery }
 import from .ui.button { Button }
 import from .ui.input { Input }
+import from .JacGraphPanel { JacGraphPanel }
 cl import from "@hugeicons/react" { HugeiconsIcon }
 cl import from "@hugeicons/core-free-icons" { SparklesIcon, Atom01Icon, Alert01Icon, CheckmarkCircle01Icon }
 
@@ -225,6 +226,7 @@ def:pub DiscoveryWorkspace() -> JsxElement {
     has pathway: str = "EGFR / MAPK signaling";
     has seed_smiles: str = "CC(C)(C)c1ccc(-c2ccccc2)cc1";
     has candidates: list[CandidateView] = [];
+    has graph: JacGraphView | None = None;
     has run_target: str = "";
     has docking_status: str = "";
     has scope_note: str = "";
@@ -239,10 +241,12 @@ def:pub DiscoveryWorkspace() -> JsxElement {
         loading = True;
         error_message = "";
         candidates = [];
+        graph = None;
         run_target = "";
         try {
             outcome = await run_discovery(target_name, disease_context, seed_smiles);
             candidates = outcome.candidates;
+            graph = outcome.graph;
             run_target = outcome.target_name;
             docking_status = outcome.docking_status;
             scope_note = outcome.scope_note;
@@ -301,6 +305,8 @@ def:pub DiscoveryWorkspace() -> JsxElement {
                 <div><span className="eyebrow">CURRENT TARGET</span><strong>{(run_target if len(candidates) > 0 else target_name)}</strong></div>
                 <span className="context-tag">{("CANDIDATE CHAIN READY" if len(candidates) > 0 else ("GENERATING CANDIDATES" if loading else "READY TO RUN"))}</span>
             </div>
+
+            <JacGraphPanel graph={graph} />
 
             {if len(candidates) == 0 {
                 <section className="panel empty-state">
