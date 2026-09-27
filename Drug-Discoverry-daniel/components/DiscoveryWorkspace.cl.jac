@@ -1,9 +1,10 @@
-sv import from ..services.discovery { AtomView, BondView, CandidateView, JacGraphView, run_discovery }
+sv import from ..services.discovery { AtomView, BondView, CandidateView, run_discovery, validate_smiles }
+sv import from ..services.evidence { EvidenceView }
 import from .ui.button { Button }
 import from .ui.input { Input }
-import from .JacGraphPanel { JacGraphPanel }
 cl import from "@hugeicons/react" { HugeiconsIcon }
 cl import from "@hugeicons/core-free-icons" { SparklesIcon, Atom01Icon, Alert01Icon, CheckmarkCircle01Icon }
+cl import from .GraphLiveView { GraphLiveView }
 
 obj ScreenPoint {
     has x: float;
@@ -127,7 +128,7 @@ def:pub PipelineStepper(is_running: bool, has_results: bool) -> JsxElement {
         <div className="progress-heading">
             <div className="progress-copy">
                 <p className="eyebrow">REFINEMENT STATUS</p>
-                <p className="pipeline-caption">{("Building 3D conformers and calculating RDKit descriptors…" if is_running else ("Candidate models generated · RDKit screen complete" if has_results else "Ready for your seed molecule"))}</p>
+        <p className="pipeline-caption">{("Resolving KEGG/DGIdb evidence and refining candidates with RDKit…" if is_running else ("Evidence gathered · RDKit refinement complete" if has_results else "Ready for a target and seed molecule"))}</p>
             </div>
             <span className={"progress-state " + ("progress-state-running" if is_running else ("progress-state-complete" if has_results else ""))}>
                 {( "REFINING" if is_running else ("COMPLETE" if has_results else "READY"))}
@@ -166,9 +167,9 @@ def:pub CandidateChain(candidates: list[CandidateView]) -> JsxElement {
                             <div className="candidate-stats">
                                 <div className="stat-chip"><span>MolWt</span><strong>{str(candidate.mol_weight)}</strong></div>
                                 <div className="stat-chip"><span>LogP</span><strong>{str(candidate.logp)}</strong></div>
-                                <div className="stat-chip"><span>Proxy score</span><strong>{str(candidate.proxy_score)}</strong></div>
+                <div className="stat-chip"><span>Property score</span><strong>{str(candidate.proxy_score)}</strong></div>
                             </div>
-                            <div className="candidate-edit"><span className="eyebrow">EDIT HYPOTHESIS</span><p>{candidate.mutation_applied}</p></div>
+                            <div className="candidate-edit"><span className="eyebrow">AGENT SELECTED</span><p>{candidate.mutation_applied}</p><small>{candidate.decision_reason}</small></div>
                             <div className="candidate-smiles"><span className="eyebrow">SMILES</span><code>{candidate.smiles}</code></div>
                             <p className={"screening-note " + ("note-pass" if candidate.lipinski_pass else "note-fail")}>
                                 <HugeiconsIcon icon={CheckmarkCircle01Icon if candidate.lipinski_pass else Alert01Icon} strokeWidth={2} className="size-3.5 shrink-0" />
@@ -179,14 +180,38 @@ def:pub CandidateChain(candidates: list[CandidateView]) -> JsxElement {
                             <div className="generation-connector" aria-label="Mutation between generations">
                                 <div className="connector-arrow"><span /> <span className="connector-arrow-symbol">→</span></div>
                                 <p className="connector-label">{candidates[index + 1].mutation_applied}</p>
-                                <p className="connector-reason">Prior screen: {candidate.failure_reason}</p>
+                                <p className="connector-reason">{candidates[index + 1].decision_reason}</p>
                             </div>
                         }}
                     </div>
                 }}
             </div>
         </div>
-        <div className="chain-legend"><span><span className="legend-dot legend-pass" />Rule-of-Five estimate passed</span><span><span className="legend-dot legend-review" />Review / threshold exceeded</span><span className="legend-disclaimer">Descriptors use RDKit; ranking remains heuristic.</span></div>
+        <div className="chain-legend"><span><span className="legend-dot legend-pass" />Rule-of-Five estimate passed</span><span><span className="legend-dot legend-review" />Review / threshold exceeded</span><span className="legend-disclaimer">Property score is not a target-binding prediction.</span></div>
+    </section>;
+}
+
+def:pub EvidencePanel(evidence: list[EvidenceView], agent_summary: str) -> JsxElement {
+    return <section className="panel evidence-panel">
+        <div className="section-heading">
+            <div><p className="eyebrow">EVIDENCE-GATHERING LOOP</p><h2 className="section-title">Biological context</h2><p className="section-description">Target and pathway records are fetched live from KEGG and DGIdb.</p></div>
+            <span className="count-pill">KEGG · DGIDB</span>
+        </div>
+        <p className="agent-summary">{agent_summary}</p>
+        {if len(evidence) == 0 {
+            <p className="evidence-empty">No external records were returned for this run.</p>
+        } else {
+            <div className="evidence-list">
+                {for (index, item) in enumerate(evidence) {
+                    <article key={str(index)} className="evidence-item">
+                        <div><span className="evidence-kind">{item.category}</span><a href={item.url} target="_blank" rel="noreferrer" className="evidence-source">{item.source} ↗</a></div>
+                        <strong>{item.label}</strong>
+                        <p>{item.detail}</p>
+                    </article>
+                }}
+            </div>
+        }}
+        <p className="evidence-note">Database associations provide biological context; they do not establish efficacy or binding for generated molecules.</p>
     </section>;
 }
 
@@ -199,13 +224,13 @@ def:pub FinalResults(candidates: list[CandidateView], docking_status: str, scope
     return <aside className="results-column">
         <section className="panel winner-panel">
             <div className="section-heading winner-heading">
-                <div><p className="eyebrow">TOP PROXY CANDIDATE</p><h2 className="section-title">Final results</h2></div>
+                <div><p className="eyebrow">TOP PROPERTY PROFILE</p><h2 className="section-title">Refinement result</h2></div>
                 <span className="winner-crown">★</span>
             </div>
             <MoleculeViewer atoms={winner.atoms} bonds={winner.bonds} generation={winner.generation} instance_id="winner" className="winner-molecule-viewer" />
             <div className="winner-generation"><span>GENERATION {str(winner.generation)}</span><span className={"screen-badge " + ("screen-badge-pass" if winner.lipinski_pass else "screen-badge-fail")}>{("SCREEN PASS" if winner.lipinski_pass else "SCREEN FAIL")}</span></div>
             <p className="winner-smiles">{winner.smiles}</p>
-            <div className="winner-proxy"><span>Proxy score</span><strong>{str(winner.proxy_score)}</strong></div>
+            <div className="winner-proxy"><span>Property score · not binding affinity</span><strong>{str(winner.proxy_score)}</strong></div>
             <div className="affinity-card">
                 <p className="eyebrow">BINDING AFFINITY</p>
                 <p className="affinity-value">Not available</p>
@@ -226,32 +251,52 @@ def:pub DiscoveryWorkspace() -> JsxElement {
     has pathway: str = "EGFR / MAPK signaling";
     has seed_smiles: str = "CC(C)(C)c1ccc(-c2ccccc2)cc1";
     has candidates: list[CandidateView] = [];
-    has graph: JacGraphView | None = None;
+    has evidence: list[EvidenceView] = [];
     has run_target: str = "";
+    has agent_summary: str = "";
     has docking_status: str = "";
     has scope_note: str = "";
     has loading: bool = False;
     has error_message: str = "";
+    has seed_is_invalid: bool = False;
+    has show_graph: bool = False;
 
     def change_target(e: ChangeEvent) { target_name = e.target.value; }
     def change_disease(e: ChangeEvent) { disease_context = e.target.value; }
     def change_pathway(e: ChangeEvent) { pathway = e.target.value; }
     def change_seed(e: ChangeEvent) { seed_smiles = e.target.value; }
+    def show_refinement_view(e: Event) { show_graph = False; }
+    def show_graph_view(e: Event) { show_graph = True; }
+    async def check_seed(e: Event) -> None {
+        try { seed_is_invalid = not await validate_smiles(seed_smiles); }
+        except Exception { seed_is_invalid = True; }
+    }
     async def handle_run -> None {
         loading = True;
         error_message = "";
         candidates = [];
-        graph = None;
         run_target = "";
+        seed_is_invalid = False;
+        localStorage.setItem("asterion-workflow", JSON.stringify({"phase": "running", "target": target_name, "disease": disease_context, "pathway": pathway, "trace": [], "candidate_count": 0, "evidence_count": 0}));
         try {
-            outcome = await run_discovery(target_name, disease_context, seed_smiles);
+            if not await validate_smiles(seed_smiles) {
+                seed_is_invalid = True;
+                error_message = "The run could not be completed. Check your inputs and try again.";
+                localStorage.setItem("asterion-workflow", JSON.stringify({"phase": "error", "target": target_name, "disease": disease_context, "pathway": pathway, "trace": [], "candidate_count": 0, "evidence_count": 0}));
+                loading = False;
+                return;
+            }
+            outcome = await run_discovery(target_name, disease_context, pathway, seed_smiles);
             candidates = outcome.candidates;
-            graph = outcome.graph;
+            evidence = outcome.evidence;
             run_target = outcome.target_name;
+            agent_summary = outcome.agent_summary;
             docking_status = outcome.docking_status;
             scope_note = outcome.scope_note;
+            localStorage.setItem("asterion-workflow", JSON.stringify({"phase": "complete", "target": outcome.target_name, "disease": disease_context, "pathway": pathway, "trace": outcome.graph_trace, "candidate_count": len(outcome.candidates), "evidence_count": len(outcome.evidence)}));
         } except Exception {
-            error_message = "The run could not be completed. Check the target name and try again.";
+            error_message = "The run could not be completed. Check your inputs and try again.";
+            localStorage.setItem("asterion-workflow", JSON.stringify({"phase": "error", "target": target_name, "disease": disease_context, "pathway": pathway, "trace": [], "candidate_count": 0, "evidence_count": 0}));
         }
         loading = False;
     }
@@ -260,7 +305,7 @@ def:pub DiscoveryWorkspace() -> JsxElement {
         <header className="app-header">
             <div className="brand-lockup">
                 <div className="brand-mark"><HugeiconsIcon icon={Atom01Icon} strokeWidth={1.8} className="size-5" /></div>
-                <div><p className="brand-name">ASTERION <span>DISCOVERY</span></p><p className="brand-caption">Autonomous molecular research</p></div>
+                <div><p className="brand-name">ASTERION</p><p className="brand-caption">Autonomous molecular research</p></div>
             </div>
             <div className="header-meta"><span className="live-dot" />RESEARCH WORKSPACE<span className="header-divider" />PROOF OF CONCEPT</div>
         </header>
@@ -270,7 +315,7 @@ def:pub DiscoveryWorkspace() -> JsxElement {
                 <div className="command-intro">
                     <p className="eyebrow">MOLECULAR INTELLIGENCE</p>
                     <h1>Candidate refinement</h1>
-                    <p className="command-subtitle">Explore a graph-backed, heuristic refinement demo, then inspect each candidate molecule.</p>
+                    <p className="command-subtitle">An evidence-gathering workflow resolves biological context, then iteratively proposes and evaluates molecular edits.</p>
                 </div>
                 <div className="target-controls research-form">
                     <label className="target-input-wrap" htmlFor="target-name">
@@ -287,45 +332,51 @@ def:pub DiscoveryWorkspace() -> JsxElement {
                     </label>
                     <label className="target-input-wrap seed-input-wrap" htmlFor="seed-smiles">
                         <span className="input-label">SEED SMILES</span>
-                        <textarea id="seed-smiles" value={seed_smiles} onChange={change_seed} className="target-input seed-textarea" />
+                        <textarea id="seed-smiles" value={seed_smiles} onChange={change_seed} onBlur={check_seed} className={"target-input seed-textarea " + ("seed-invalid" if seed_is_invalid else "")} aria-invalid={seed_is_invalid} />
                     </label>
-                    <p className="seed-note">RDKit generates a 3D conformer from the seed SMILES. Target and pathway are recorded for context; heuristic refinement is target-agnostic.</p>
+                    <p className="seed-note">KEGG and DGIdb provide target context. RDKit applies valid reaction-rule edits and selects improving drug-like property profiles. Docking is not connected.</p>
                     <Button className="run-button" disabled={loading} onClick={handle_run}>
                         <HugeiconsIcon icon={SparklesIcon} strokeWidth={2} className="size-4" />
                         {("Running refinement…" if loading else "Run refinement demo")}
                     </Button>
                 </div>
-                <div className="command-foot"><span>Research prototype</span><span className="command-foot-note">RDKit descriptors · heuristic proxy</span></div>
+                <div className="command-foot"><span>Research prototype</span><span className="command-foot-note">KEGG · DGIdb · RDKit</span></div>
                 {error_message and <p role="alert" className="error-message">{error_message}</p>}
             </section>
 
             <PipelineStepper is_running={loading} has_results={len(candidates) > 0} />
+
+            <div className="workspace-view-tabs" role="tablist" aria-label="Workspace view">
+                <button type="button" role="tab" aria-selected={not show_graph} className={"workspace-view-tab " + ("workspace-view-tab-active" if not show_graph else "")} onClick={show_refinement_view}>REFINEMENT</button>
+                <button type="button" role="tab" aria-selected={show_graph} className={"workspace-view-tab " + ("workspace-view-tab-active" if show_graph else "")} onClick={show_graph_view}><span className="live-dot" />LIVE JAC GRAPH</button>
+            </div>
+
+            {if show_graph { <GraphLiveView /> }}
 
             <div className="run-context">
                 <div><span className="eyebrow">CURRENT TARGET</span><strong>{(run_target if len(candidates) > 0 else target_name)}</strong></div>
                 <span className="context-tag">{("CANDIDATE CHAIN READY" if len(candidates) > 0 else ("GENERATING CANDIDATES" if loading else "READY TO RUN"))}</span>
             </div>
 
-            <JacGraphPanel graph={graph} />
-
-            {if len(candidates) == 0 {
+            {if not show_graph and len(candidates) == 0 {
                 <section className="panel empty-state">
                     <div className="empty-orbit"><HugeiconsIcon icon={Atom01Icon} strokeWidth={1.3} className="size-8" /></div>
                     <p className="eyebrow">DISCOVERY CANVAS</p>
                     <h2>{("Generating your candidate chain" if loading else "Your candidate chain starts here")}</h2>
-                    <p>{("RDKit is checking the demo scaffold and building heuristic variants." if loading else "Enter a target label to inspect an RDKit-rendered candidate chain from the demo scaffold. This prototype does not condition edits or ranking on the target.")}</p>
-                    <div className="empty-state-meta"><span>01 · Validate SMILES</span><span>02 · Estimate descriptors</span><span>03 · Rank proxy scores</span></div>
+                    <p>{("The agent is resolving target and pathway records, then evaluating valid molecular edits." if loading else "Enter a target, pathway and seed SMILES. The agent gathers KEGG and DGIdb evidence, then iteratively tests RDKit reaction-rule analogs against a drug-like property profile.")}</p>
+                    <div className="empty-state-meta"><span>01 · Resolve gene/pathway</span><span>02 · Query drug interactions</span><span>03 · Iterate validated edits</span></div>
                 </section>
             }}
 
-            {if len(candidates) > 0 {
+            {if not show_graph and len(candidates) > 0 {
+                <EvidencePanel evidence={evidence} agent_summary={agent_summary} />
                 <div className="results-layout">
                     <CandidateChain candidates={candidates} />
                     <FinalResults candidates={candidates} docking_status={docking_status} scope_note={scope_note} />
                 </div>
             }}
 
-            <footer className="app-footer"><span>ASTERION DISCOVERY · RESEARCH PROTOTYPE</span><span>Heuristic candidate refinement · no clinical use</span></footer>
+            <footer className="app-footer"><span>ASTERION · RESEARCH PROTOTYPE</span><span>Evidence-backed context · descriptor-ranked chemistry · no docking</span></footer>
         </div>
     </main>;
 }

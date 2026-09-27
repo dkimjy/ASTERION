@@ -1,7 +1,7 @@
 [project]
 name = "empty"
 version = "0.0.1"
-description = "Asterion Discovery molecular research prototype"
+description = "ASTERION molecular research prototype"
 entry-point = "main.jac"
 kind = "web-app"
 
@@ -75,15 +75,15 @@ plugins = ["tailwindcss()"]
 lib_imports = ["import tailwindcss from '@tailwindcss/vite'"]
 
 [client.app_meta_data]
-title = "Asterion Discovery | Molecular Research"
+title = "ASTERION | Molecular Research"
 description = "A research prototype for target-labeled candidate exploration with RDKit descriptor screening."
 keywords = "drug discovery, molecular research, RDKit, Jac, candidate refinement"
-author = "Asterion Discovery"
+author = "ASTERION"
 theme_color = "#102431"
 og_type = "website"
-og_title = "Asterion Discovery"
+og_title = "ASTERION"
 og_description = "Target-labeled candidate exploration with RDKit descriptor screening."
-og_site_name = "Asterion Discovery"
+og_site_name = "ASTERION"
 
 
 [scale]
